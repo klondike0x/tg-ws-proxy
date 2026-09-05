@@ -310,7 +310,47 @@ def run_tray() -> None:
     log.info("Tray app exited")
 
 
+def _smoke_test() -> None:
+    """Exercise the frozen GUI stack without starting the proxy or writing config."""
+    import gi
+
+    gi.require_version('AppIndicator3', '0.1')
+    gi.require_version('AyatanaAppIndicator3', '0.1')
+    from gi.repository import AppIndicator3, AyatanaAppIndicator3
+
+    # Namespace imports alone do not resolve app_indicator_new: call it too.
+    indicators = [
+        namespace.Indicator.new(
+            'tg-ws-proxy-smoke-test', '', namespace.IndicatorCategory.APPLICATION_STATUS,
+        )
+        for namespace in (AppIndicator3, AyatanaAppIndicator3)
+    ]
+    icon = pystray.Icon('tg-ws-proxy-smoke-test', Image.new('RGB', (16, 16)))
+    root = ctk.CTk()
+    root.withdraw()
+    root.update_idletasks()
+    root.destroy()
+
+    # A successful constructor on the build host can hide missing bundled
+    # libraries. Check where the dynamic loader actually obtained them.
+    bundle_dir = os.path.realpath(sys._MEIPASS) + os.sep
+    prefixes = ('libglib-', 'libgobject-', 'libgio-', 'libgtk-',
+                'libappindicator', 'libayatana-', 'libdbusmenu-')
+    with open('/proc/self/maps', encoding='utf-8') as maps:
+        paths = {line.split(maxsplit=5)[-1].strip() for line in maps}
+    for path in sorted(paths):
+        if os.path.basename(path).startswith(prefixes):
+            if not os.path.realpath(path).startswith(bundle_dir):
+                raise RuntimeError('GUI library loaded outside the bundle: ' + path)
+            print(path)
+    assert icon is not None and all(indicators)
+    print('Linux bundle smoke test passed')
+
+
 def main() -> None:
+    if sys.argv[1:] == ['--smoke-test']:
+        _smoke_test()
+        return
     if not acquire_lock():
         _show_info(t("dialog.already_running"), os.path.basename(sys.argv[0]))
         return
